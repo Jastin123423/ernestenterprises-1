@@ -70,6 +70,7 @@ export const Sales: React.FC<SalesProps> = ({ sales, products, onAddSale }) => {
 
     const newSale: Sale = {
       id: Date.now().toString(),
+      shopId: '', // Placeholder
       productId: selectedProduct.id,
       productName: selectedProduct.name,
       quantity,

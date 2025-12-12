@@ -9,8 +9,16 @@ export enum Page {
   MEMORY = 'MEMORY',
 }
 
+export interface Shop {
+  id: string;
+  name: string;
+  location: string;
+  createdAt: string;
+}
+
 export interface Product {
   id: string;
+  shopId: string;
   name: string;
   category: string;
   costPrice: number;
@@ -22,6 +30,7 @@ export interface Product {
 
 export interface Sale {
   id: string;
+  shopId: string;
   productId: string;
   productName: string;
   quantity: number;
@@ -34,6 +43,7 @@ export interface Sale {
 
 export interface Expense {
   id: string;
+  shopId: string;
   type: string;
   description: string;
   amount: number;
@@ -48,6 +58,7 @@ export interface PaymentRecord {
 
 export interface Debt {
   id: string;
+  shopId: string;
   debtorName: string;
   productId: string;
   productName: string;
@@ -62,11 +73,15 @@ export interface Debt {
 
 export interface MemoryItem {
   id: string;
+  shopId: string;
   title: string;
   description: string;
   date: string; // ISO String
-  type: 'image' | 'text';
-  base64Data?: string; // For images
+  type: 'image' | 'text' | 'file';
+  fileType?: string; // MIME type e.g. 'application/pdf'
+  fileName?: string; // Original file name
+  base64Data?: string; // Legacy local storage support
+  imageUrl?: string; // New Firebase URL support (used for all files now)
 }
 
 export interface DashboardStats {

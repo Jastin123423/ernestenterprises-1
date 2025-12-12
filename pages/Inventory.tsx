@@ -41,6 +41,7 @@ export const Inventory: React.FC<InventoryProps> = ({ products, sales, onAdd, on
     if (productForm.name && productForm.costPrice !== undefined) {
       const payload: Product = {
         id: editingId || Date.now().toString(),
+        shopId: '', // Placeholder, injected by App.tsx
         name: productForm.name,
         category: productForm.category || 'Jumla',
         costPrice: Number(productForm.costPrice),

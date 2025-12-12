@@ -1,5 +1,6 @@
+
 import React, { useState } from 'react';
-import { Page } from '../types';
+import { Page, Shop } from '../types';
 import { 
   LayoutDashboard, 
   Package, 
@@ -9,7 +10,11 @@ import {
   LogOut, 
   Menu,
   Bell,
-  FolderHeart
+  FolderHeart,
+  Store,
+  ChevronDown,
+  PlusCircle,
+  Settings
 } from 'lucide-react';
 
 export interface AlertItem {
@@ -21,8 +26,13 @@ export interface AlertItem {
 
 interface LayoutProps {
   currentPage: Page;
+  currentShop: Shop | null;
+  shops: Shop[];
   onNavigate: (page: Page) => void;
   onLogout: () => void;
+  onSwitchShop: (shop: Shop) => void;
+  onCreateShop: () => void;
+  onManageShop: (shop: Shop) => void; // Added Prop
   alerts: AlertItem[];
   children: React.ReactNode;
 }
@@ -56,9 +66,21 @@ const NavItem = ({
   );
 };
 
-export const Layout: React.FC<LayoutProps> = ({ currentPage, onNavigate, onLogout, alerts, children }) => {
+export const Layout: React.FC<LayoutProps> = ({ 
+  currentPage, 
+  currentShop,
+  shops,
+  onNavigate, 
+  onLogout, 
+  onSwitchShop,
+  onCreateShop,
+  onManageShop,
+  alerts, 
+  children 
+}) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showShopMenu, setShowShopMenu] = useState(false);
 
   const totalCount = alerts.length;
 
@@ -116,16 +138,57 @@ export const Layout: React.FC<LayoutProps> = ({ currentPage, onNavigate, onLogou
                  <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden mr-4 text-slate-300 hover:text-white">
                    <Menu />
                  </button>
-                 <div>
-                   <h1 className="text-lg font-bold tracking-wide text-white uppercase hidden md:block">Ernest Enterprises</h1>
-                   <h2 className="text-sm font-medium text-ernest-gold">
-                     {currentPage === Page.DASHBOARD && 'Dashibodi Kuu'}
-                     {currentPage === Page.INVENTORY && 'Usimamizi wa Mali'}
-                     {currentPage === Page.SALES && 'Kituo cha Mauzo'}
-                     {currentPage === Page.EXPENSES && 'Kudhibiti Matumizi'}
-                     {currentPage === Page.DEBTS && 'Madeni na Mikopo'}
-                     {currentPage === Page.MEMORY && 'Nyaraka na Kumbukumbu'}
-                   </h2>
+                 
+                 {/* Shop Switcher */}
+                 <div className="relative">
+                    <button 
+                      onClick={() => setShowShopMenu(!showShopMenu)}
+                      className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded-lg border border-slate-700 transition-colors"
+                    >
+                      <Store className="text-ernest-gold" size={18} />
+                      <div className="text-left hidden md:block">
+                        <p className="text-[10px] text-slate-400 uppercase leading-none font-bold">Duka Linalotumika</p>
+                        <p className="text-sm font-bold text-white leading-tight">{currentShop?.name || 'Chagua Duka'}</p>
+                      </div>
+                      <ChevronDown size={14} className="text-slate-400 ml-2" />
+                    </button>
+
+                    {showShopMenu && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowShopMenu(false)}></div>
+                        <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-200 text-slate-900 z-20 overflow-hidden animate-fade-in-up">
+                           <div className="p-2 bg-slate-50 border-b border-slate-100 text-xs font-bold text-slate-500 uppercase">
+                             Badilisha Duka
+                           </div>
+                           <div className="max-h-64 overflow-y-auto">
+                             {shops.map(shop => (
+                               <div key={shop.id} className={`flex items-center justify-between border-b border-slate-50 ${currentShop?.id === shop.id ? 'bg-blue-50' : ''}`}>
+                                 <button
+                                   onClick={() => { onSwitchShop(shop); setShowShopMenu(false); }}
+                                   className={`flex-1 text-left px-4 py-3 text-sm font-medium hover:bg-slate-50 flex items-center ${currentShop?.id === shop.id ? 'text-ernest-blue' : 'text-slate-700'}`}
+                                 >
+                                   <span className="truncate">{shop.name}</span>
+                                   {currentShop?.id === shop.id && <div className="ml-2 w-2 h-2 bg-ernest-blue rounded-full"></div>}
+                                 </button>
+                                 <button 
+                                    onClick={(e) => { e.stopPropagation(); onManageShop(shop); setShowShopMenu(false); }}
+                                    className="p-3 text-slate-400 hover:text-ernest-blue transition-colors hover:bg-slate-100"
+                                    title="Mipangilio ya Duka (Hariri/Futa)"
+                                 >
+                                    <Settings size={16} />
+                                 </button>
+                               </div>
+                             ))}
+                           </div>
+                           <button 
+                             onClick={() => { onCreateShop(); setShowShopMenu(false); }}
+                             className="w-full text-left px-4 py-3 text-sm font-bold text-ernest-blue hover:bg-slate-50 flex items-center border-t border-slate-100"
+                           >
+                             <PlusCircle size={16} className="mr-2" /> Ongeza Duka Jipya
+                           </button>
+                        </div>
+                      </>
+                    )}
                  </div>
               </div>
 

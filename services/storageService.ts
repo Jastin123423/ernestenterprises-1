@@ -1,212 +1,342 @@
 
-import { Product, Sale, Expense, Debt, MemoryItem, PaymentRecord } from '../types';
+import { Product, Sale, Expense, Debt, MemoryItem, PaymentRecord, Shop } from '../types';
+import { db, storageBucket } from './firebase';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  updateDoc, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  where,
+  getDoc,
+  runTransaction,
+  writeBatch,
+  getDocs
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
-// Initial Mock Data - CLEAN SLATE
-const INITIAL_PRODUCTS: Product[] = [];
-const INITIAL_EXPENSES: Expense[] = [];
-
-const STORAGE_KEYS = {
-  PRODUCTS: 'ernest_products',
-  SALES: 'ernest_sales',
-  EXPENSES: 'ernest_expenses',
-  DEBTS: 'ernest_debts',
-  MEMORIES: 'ernest_memories',
-};
+// Collection References
+const shopsCol = collection(db, 'shops');
+const productsCol = collection(db, 'products');
+const salesCol = collection(db, 'sales');
+const expensesCol = collection(db, 'expenses');
+const debtsCol = collection(db, 'debts');
+const memoriesCol = collection(db, 'memories');
 
 class StorageService {
-  private get<T>(key: string, initial: T): T {
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : initial;
+  
+  // --- SHOPS MANAGEMENT ---
+
+  subscribeToShops(callback: (shops: Shop[]) => void) {
+    const q = query(shopsCol, orderBy('createdAt'));
+    return onSnapshot(q, (snapshot) => {
+      const shops = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Shop));
+      callback(shops);
+    });
   }
 
-  private set(key: string, value: any): void {
+  async createShop(shop: Shop): Promise<void> {
+    await setDoc(doc(shopsCol, shop.id), shop);
+  }
+
+  async updateShop(shop: Shop): Promise<void> {
+    const shopRef = doc(shopsCol, shop.id);
+    await updateDoc(shopRef, {
+      name: shop.name,
+      location: shop.location
+    });
+  }
+
+  async deleteShop(shopId: string): Promise<void> {
+    // 1. Delete all related data in other collections
+    // We must query each collection for data belonging to this shop
+    const collectionsToCheck = ['products', 'sales', 'expenses', 'debts', 'memories'];
+    
+    for (const colName of collectionsToCheck) {
+      const q = query(collection(db, colName), where('shopId', '==', shopId));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) continue;
+
+      // Firestore batch limit is 500. We process in chunks of 400 to be safe.
+      const chunk = 400;
+      for (let i = 0; i < snapshot.docs.length; i += chunk) {
+        const batch = writeBatch(db);
+        snapshot.docs.slice(i, i + chunk).forEach(doc => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+      }
+    }
+
+    // 2. Delete the shop document itself
+    await deleteDoc(doc(shopsCol, shopId));
+  }
+
+  // --- REAL-TIME SUBSCRIPTIONS (SCOPED BY SHOP ID) ---
+  
+  subscribeToProducts(shopId: string, callback: (products: Product[]) => void) {
+    const q = query(productsCol, where('shopId', '==', shopId)); 
+    // Note: To order by name with a where clause, Firestore requires an index. 
+    // We will sort client-side to avoid index complexity for the user.
+    return onSnapshot(q, (snapshot) => {
+      const products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      products.sort((a, b) => a.name.localeCompare(b.name));
+      callback(products);
+    });
+  }
+
+  subscribeToSales(shopId: string, callback: (sales: Sale[]) => void) {
+    const q = query(salesCol, where('shopId', '==', shopId));
+    return onSnapshot(q, (snapshot) => {
+      const sales = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
+      sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      callback(sales);
+    });
+  }
+
+  subscribeToExpenses(shopId: string, callback: (expenses: Expense[]) => void) {
+    const q = query(expensesCol, where('shopId', '==', shopId));
+    return onSnapshot(q, (snapshot) => {
+      const expenses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense));
+      expenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      callback(expenses);
+    });
+  }
+
+  subscribeToDebts(shopId: string, callback: (debts: Debt[]) => void) {
+    const q = query(debtsCol, where('shopId', '==', shopId));
+    return onSnapshot(q, (snapshot) => {
+      const debts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Debt));
+      debts.sort((a, b) => new Date(b.borrowDate).getTime() - new Date(a.borrowDate).getTime());
+      callback(debts);
+    });
+  }
+
+  subscribeToMemories(shopId: string, callback: (memories: MemoryItem[]) => void) {
+    const q = query(memoriesCol, where('shopId', '==', shopId));
+    return onSnapshot(q, (snapshot) => {
+      const memories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MemoryItem));
+      memories.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      callback(memories);
+    });
+  }
+
+  // --- PRODUCTS ---
+
+  async saveProduct(product: Product): Promise<void> {
+    const docRef = doc(productsCol, product.id);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const existing = docSnap.data() as Product;
+      // Update restock date if stock increased
+      if (product.stock > existing.stock) {
+        product.lastRestockDate = new Date().toISOString();
+      } else {
+        product.lastRestockDate = existing.lastRestockDate;
+      }
+    } else {
+      product.lastRestockDate = new Date().toISOString();
+    }
+
+    await setDoc(docRef, product);
+  }
+
+  async deleteProduct(id: string): Promise<void> {
+    await deleteDoc(doc(productsCol, id));
+  }
+
+  // --- SALES ---
+
+  async addSale(sale: Sale): Promise<void> {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      await runTransaction(db, async (transaction) => {
+        const productRef = doc(productsCol, sale.productId);
+        const productSnap = await transaction.get(productRef);
+
+        if (!productSnap.exists()) {
+          throw new Error("Bidhaa haipo!");
+        }
+
+        const product = productSnap.data() as Product;
+        const newStock = product.stock - sale.quantity;
+
+        if (newStock < 0) {
+          throw new Error("Stoku haitoshi!");
+        }
+
+        // 1. Update Product Stock
+        transaction.update(productRef, { stock: newStock });
+
+        // 2. Add Sale Record
+        const saleRef = doc(salesCol, sale.id);
+        transaction.set(saleRef, sale);
+      });
     } catch (e) {
-      console.error("Storage Quota Exceeded", e);
-      alert("Nafasi imejaa! Tafadhali futa picha au kumbukumbu za zamani.");
+      console.error("Transaction failed: ", e);
+      alert("Imeshindikana kuuza: " + e);
       throw e;
     }
   }
 
-  // --- Products ---
-  getProducts(): Product[] {
-    return this.get<Product[]>(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
+  // --- EXPENSES ---
+
+  async addExpense(expense: Expense): Promise<void> {
+    await setDoc(doc(expensesCol, expense.id), expense);
   }
 
-  saveProduct(product: Product): void {
-    const products = this.getProducts();
-    const index = products.findIndex(p => p.id === product.id);
-    
-    if (index >= 0) {
-      const existingProduct = products[index];
-      // Logic: If stock has increased, update the lastRestockDate
-      if (product.stock > existingProduct.stock) {
-        product.lastRestockDate = new Date().toISOString();
-      } else {
-        // Preserve old date if stock didn't increase
-        product.lastRestockDate = existingProduct.lastRestockDate;
+  async deleteExpense(id: string): Promise<void> {
+    await deleteDoc(doc(expensesCol, id));
+  }
+
+  // --- DEBTS ---
+
+  async addDebt(debt: Debt): Promise<void> {
+    try {
+      await runTransaction(db, async (transaction) => {
+        if (debt.productId && debt.productId !== 'custom') {
+           const productRef = doc(productsCol, debt.productId);
+           const productSnap = await transaction.get(productRef);
+           
+           if (productSnap.exists()) {
+             const product = productSnap.data() as Product;
+             const newStock = product.stock - debt.quantity;
+             transaction.update(productRef, { stock: newStock });
+           }
+        }
+        
+        debt.payments = [];
+        debt.totalAmount = debt.amountOwed;
+
+        const debtRef = doc(debtsCol, debt.id);
+        transaction.set(debtRef, debt);
+      });
+    } catch (e) {
+      console.error("Failed to add debt: ", e);
+      throw e;
+    }
+  }
+
+  async payDebt(debtId: string, amount: number): Promise<void> {
+    try {
+      await runTransaction(db, async (transaction) => {
+        const debtRef = doc(debtsCol, debtId);
+        const debtSnap = await transaction.get(debtRef);
+        
+        if (!debtSnap.exists()) throw new Error("Deni halipo");
+        
+        const debt = debtSnap.data() as Debt;
+        
+        // 1. Record Payment
+        const payment: PaymentRecord = {
+          id: Date.now().toString(),
+          amount: amount,
+          date: new Date().toISOString()
+        };
+        
+        const newAmountOwed = debt.amountOwed - amount;
+        const updatedPayments = [...(debt.payments || []), payment];
+        
+        // 2. Create Sale (Revenue)
+        const saleId = `pay-${Date.now()}`;
+        const newSale: Sale = {
+          id: saleId,
+          shopId: debt.shopId, // IMPORTANT: Inherit Shop ID from Debt
+          productId: debt.productId === 'custom' ? 'debt-payment' : debt.productId,
+          productName: `Malipo ya Deni: ${debt.debtorName} (${debt.productName})`,
+          quantity: 0, 
+          sellingPriceSnapshot: amount,
+          costPriceSnapshot: 0,
+          totalAmount: amount,
+          profit: amount,
+          date: new Date().toISOString()
+        };
+        
+        const saleRef = doc(salesCol, saleId);
+        transaction.set(saleRef, newSale);
+
+        // 3. Update Debt
+        if (newAmountOwed <= 0) {
+           transaction.update(debtRef, { 
+             amountOwed: 0, 
+             payments: updatedPayments, 
+             isPaid: true 
+           });
+        } else {
+           transaction.update(debtRef, { 
+             amountOwed: newAmountOwed, 
+             payments: updatedPayments 
+           });
+        }
+      });
+    } catch (e) {
+      console.error("Pay debt error", e);
+      throw e;
+    }
+  }
+
+  async deleteDebt(id: string): Promise<void> {
+    await deleteDoc(doc(debtsCol, id));
+  }
+
+  // --- MEMORIES & STORAGE ---
+
+  async uploadFile(file: File): Promise<string> {
+     // Ensure safe filename
+     const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+     const storageRef = ref(storageBucket, `memories/${Date.now()}_${safeName}`);
+     
+     // Set metadata to help browser handle the file correctly
+     const metadata = {
+       contentType: file.type
+     };
+
+     // Use uploadBytes (simple) instead of resumable for speed on small files
+     // This reduces the number of network roundtrips.
+     const snapshot = await uploadBytes(storageRef, file, metadata);
+     return await getDownloadURL(snapshot.ref);
+  }
+
+  async addMemory(memory: MemoryItem, file?: File): Promise<void> {
+    if (file) {
+      try {
+        const url = await this.uploadFile(file);
+        memory.imageUrl = url;
+        memory.fileType = file.type;
+        memory.fileName = file.name;
+        
+        if (file.type.startsWith('image/')) {
+          memory.type = 'image';
+        } else {
+          memory.type = 'file';
+        }
+      } catch (error) {
+        console.error("Error uploading file for memory:", error);
+        throw new Error("Failed to upload file");
       }
-      products[index] = product;
     } else {
-      // New product gets current date
-      product.lastRestockDate = new Date().toISOString();
-      products.push(product);
+       memory.type = 'text';
     }
-    this.set(STORAGE_KEYS.PRODUCTS, products);
+    
+    delete memory.base64Data; 
+    
+    await setDoc(doc(memoriesCol, memory.id), memory);
   }
 
-  deleteProduct(id: string): void {
-    const products = this.getProducts().filter(p => p.id !== id);
-    this.set(STORAGE_KEYS.PRODUCTS, products);
-  }
-
-  // --- Sales ---
-  getSales(): Sale[] {
-    return this.get<Sale[]>(STORAGE_KEYS.SALES, []);
-  }
-
-  addSale(sale: Sale): void {
-    const sales = this.getSales();
-    sales.push(sale);
-    this.set(STORAGE_KEYS.SALES, sales);
-
-    // Update Stock
-    const products = this.getProducts();
-    const product = products.find(p => p.id === sale.productId);
-    if (product) {
-      product.stock -= sale.quantity;
-      // Note: We do NOT update lastRestockDate when selling
-      this.saveProduct({ ...product, lastRestockDate: product.lastRestockDate }); 
+  async deleteMemory(id: string, imageUrl?: string): Promise<void> {
+    await deleteDoc(doc(memoriesCol, id));
+    if (imageUrl) {
+      try {
+        const fileRef = ref(storageBucket, imageUrl);
+        await deleteObject(fileRef);
+      } catch (e) {
+        console.warn("Could not delete file from storage:", e);
+      }
     }
-  }
-
-  // --- Expenses ---
-  getExpenses(): Expense[] {
-    return this.get<Expense[]>(STORAGE_KEYS.EXPENSES, INITIAL_EXPENSES);
-  }
-
-  addExpense(expense: Expense): void {
-    const expenses = this.getExpenses();
-    expenses.push(expense);
-    this.set(STORAGE_KEYS.EXPENSES, expenses);
-  }
-
-  deleteExpense(id: string): void {
-    const expenses = this.getExpenses().filter(e => e.id !== id);
-    this.set(STORAGE_KEYS.EXPENSES, expenses);
-  }
-
-  // --- Debts ---
-  getDebts(): Debt[] {
-    const debts = this.get<Debt[]>(STORAGE_KEYS.DEBTS, []);
-    // Migration: ensure new fields exist for old data
-    return debts.map(d => ({
-      ...d,
-      totalAmount: d.totalAmount || d.amountOwed,
-      payments: d.payments || []
-    }));
-  }
-
-  addDebt(debt: Debt): void {
-    const debts = this.getDebts();
-    // Initialize payments and total logic
-    debt.payments = [];
-    debt.totalAmount = debt.amountOwed;
-    
-    debts.push(debt);
-    this.set(STORAGE_KEYS.DEBTS, debts);
-
-    // Decrease stock immediately when lent ONLY IF it is a tracked product
-    const products = this.getProducts();
-    const product = products.find(p => p.id === debt.productId);
-    if (product) {
-      product.stock -= debt.quantity;
-      this.saveProduct({ ...product, lastRestockDate: product.lastRestockDate });
-    }
-  }
-
-  payDebt(debtId: string, amount: number): void {
-    const debts = this.getDebts();
-    const debtIndex = debts.findIndex(d => d.id === debtId);
-    
-    if (debtIndex === -1) return;
-    
-    const debt = debts[debtIndex];
-    
-    // 1. Record Payment in Debt History
-    const payment: PaymentRecord = {
-      id: Date.now().toString(),
-      amount: amount,
-      date: new Date().toISOString()
-    };
-    
-    debt.payments.push(payment);
-    debt.amountOwed -= amount;
-    
-    // Safety check for negative
-    if (debt.amountOwed < 0) debt.amountOwed = 0;
-
-    // 2. Create a SALE record (Cash In) for this payment
-    // We treat debt payment as revenue coming in now.
-    
-    const newSale: Sale = {
-      id: `pay-${Date.now()}`,
-      productId: debt.productId === 'custom' ? 'debt-payment' : debt.productId,
-      productName: `Malipo ya Deni: ${debt.debtorName} (${debt.productName})`,
-      quantity: 0, // No stock change now
-      sellingPriceSnapshot: amount,
-      costPriceSnapshot: 0, // Cost was handled when item left stock (inventory asset drop)
-      totalAmount: amount,
-      profit: amount, // Cash recovery
-      date: new Date().toISOString()
-    };
-    
-    this.addSale(newSale); // This saves the sale
-
-    // 3. Update or Delete Debt
-    if (debt.amountOwed <= 0) {
-      // Fully paid - delete logic requested
-      debt.isPaid = true;
-      // We can remove it from list or keep it marked as paid. 
-      // User said "deleted automatically". Let's remove it from the active debts list.
-      const updatedDebts = debts.filter(d => d.id !== debtId);
-      this.set(STORAGE_KEYS.DEBTS, updatedDebts);
-    } else {
-      // Still owing, update record
-      debts[debtIndex] = debt;
-      this.set(STORAGE_KEYS.DEBTS, debts);
-    }
-  }
-
-  deleteDebt(id: string): void {
-    const debts = this.getDebts().filter(d => d.id !== id);
-    this.set(STORAGE_KEYS.DEBTS, debts);
-  }
-
-  // --- Memories ---
-  getMemories(): MemoryItem[] {
-    return this.get<MemoryItem[]>(STORAGE_KEYS.MEMORIES, []);
-  }
-
-  addMemory(memory: MemoryItem): void {
-    const memories = this.getMemories();
-    memories.push(memory);
-    this.set(STORAGE_KEYS.MEMORIES, memories);
-  }
-
-  updateMemory(memory: MemoryItem): void {
-    const memories = this.getMemories();
-    const index = memories.findIndex(m => m.id === memory.id);
-    if (index >= 0) {
-      memories[index] = memory;
-      this.set(STORAGE_KEYS.MEMORIES, memories);
-    }
-  }
-
-  deleteMemory(id: string): void {
-    const memories = this.getMemories().filter(m => m.id !== id);
-    this.set(STORAGE_KEYS.MEMORIES, memories);
   }
 }
 

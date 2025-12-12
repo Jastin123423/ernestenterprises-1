@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Expense } from '../types';
 import { CreditCard, Plus, Trash2, Calendar, Filter } from 'lucide-react';
@@ -23,6 +22,7 @@ export const Expenses: React.FC<ExpensesProps> = ({ expenses, onAddExpense, onDe
     e.preventDefault();
     onAddExpense({
       id: Date.now().toString(),
+      shopId: '', // Placeholder, injected by App.tsx
       type: newExpense.type || 'Nyingine',
       description: newExpense.description || '',
       amount: Number(newExpense.amount),

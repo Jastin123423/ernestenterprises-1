@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Debt, Product } from '../types';
 import { Users, AlertCircle, Package, Type, Trash2, History, CreditCard, ChevronDown, ChevronUp, Filter } from 'lucide-react';
@@ -73,6 +72,7 @@ export const Debts: React.FC<DebtsProps> = ({ debts, products, onAddDebt, onPayD
 
     onAddDebt({
       id: Date.now().toString(),
+      shopId: '', // Placeholder, injected by App.tsx
       debtorName,
       productId: prodId,
       productName: prodName || 'Deni',
